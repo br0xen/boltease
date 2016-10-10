@@ -2,6 +2,7 @@ package boltease
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -13,25 +14,62 @@ import (
 
 // DB is a struct for accomplishing this
 type DB struct {
-	localFile string
-	localDB   *bolt.DB
+	filename string
+	boltDB   *bolt.DB
+	mode     os.FileMode
+	options  *bolt.Options
+	dbIsOpen bool
 }
 
-// Open returns the DB object
-func Open(filename string) (*DB, error) {
+// Create makes sure we can get open the file and returns the DB object
+func Create(fn string, m os.FileMode, opts *bolt.Options) (*DB, error) {
 	var err error
-	b := DB{localFile: filename}
-	b.localDB, err = bolt.Open(filename, 0644, nil)
+	b := DB{filename: fn, mode: m, options: opts}
+	b.boltDB, err = bolt.Open(fn, m, opts)
 	if err != nil {
 		return nil, err
 	}
-	// Go ahead and make sure it's fresh
+	defer b.boltDB.Close()
 	return &b, nil
+}
+
+func (b *DB) OpenDB() error {
+	if b.dbIsOpen {
+		// DB is already open, that's fine.
+		return nil
+	}
+	var err error
+	if b.boltDB, err = bolt.Open(b.filename, b.mode, b.options); err != nil {
+		return err
+	}
+	b.dbIsOpen = true
+	return err
+}
+
+func (b *DB) CloseDB() error {
+	if !b.dbIsOpen {
+		// DB is already closed, that's fine.
+		return nil
+	}
+	var err error
+	if err = b.boltDB.Close(); err != nil {
+		return err
+	}
+	b.dbIsOpen = false
+	return err
 }
 
 // MkBucketPath builds all buckets in the string slice
 func (b *DB) MkBucketPath(path []string) error {
-	err := b.localDB.Update(func(tx *bolt.Tx) error {
+	var err error
+	if !b.dbIsOpen {
+		if err = b.OpenDB(); err != nil {
+			return err
+		}
+		defer b.CloseDB()
+	}
+
+	err = b.boltDB.Update(func(tx *bolt.Tx) error {
 		var err error
 		bkt := tx.Bucket([]byte(path[0]))
 		if bkt == nil {
@@ -67,20 +105,25 @@ func (b *DB) MkBucketPath(path []string) error {
 func (b *DB) GetValue(path []string, key string) (string, error) {
 	var err error
 	var ret string
-	b.localDB.View(func(tx *bolt.Tx) error {
+	if !b.dbIsOpen {
+		if err = b.OpenDB(); err != nil {
+			return ret, err
+		}
+		defer b.CloseDB()
+	}
+	err = b.boltDB.View(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(path[0]))
 		if bkt == nil {
 			return fmt.Errorf("Couldn't find bucket " + path[0])
 		}
-		var newBkt *bolt.Bucket
 		for idx := 1; idx < len(path); idx++ {
-			newBkt = bkt.Bucket([]byte(path[idx]))
-			if newBkt == nil {
+			bkt = bkt.Bucket([]byte(path[idx]))
+			if bkt == nil {
 				return fmt.Errorf("Couldn't find bucket " + strings.Join(path[:idx], "/"))
 			}
 		}
 		// newBkt should have the last bucket in the path
-		ret = string(newBkt.Get([]byte(key)))
+		ret = string(bkt.Get([]byte(key)))
 		return nil
 	})
 	return ret, err
@@ -89,23 +132,31 @@ func (b *DB) GetValue(path []string, key string) (string, error) {
 // SetValue sets the value of key at path to val
 // path is a slice of tokens
 func (b *DB) SetValue(path []string, key, val string) error {
-	err := b.MkBucketPath(path)
+	var err error
+	if !b.dbIsOpen {
+		if err = b.OpenDB(); err != nil {
+			return err
+		}
+		defer b.CloseDB()
+	}
+
+	err = b.MkBucketPath(path)
 	if err != nil {
 		return err
 	}
-	b.localDB.Update(func(tx *bolt.Tx) error {
-		newBkt := tx.Bucket([]byte(path[0]))
-		if newBkt == nil {
+	err = b.boltDB.Update(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(path[0]))
+		if bkt == nil {
 			return fmt.Errorf("Couldn't find bucket " + path[0])
 		}
 		for idx := 1; idx < len(path); idx++ {
-			newBkt, err = newBkt.CreateBucketIfNotExists([]byte(path[idx]))
+			bkt, err = bkt.CreateBucketIfNotExists([]byte(path[idx]))
 			if err != nil {
 				return err
 			}
 		}
-		// newBkt should have the last bucket in the path
-		return newBkt.Put([]byte(key), []byte(val))
+		// bkt should have the last bucket in the path
+		return bkt.Put([]byte(key), []byte(val))
 	})
 	return err
 }
@@ -160,7 +211,7 @@ func (b *DB) GetTimestamp(path []string, key string) (time.Time, error) {
 	return time.Unix(0, 0), err
 }
 
-// SetTimestamp returns the value at 'path'
+// SetTimestamp saves a timestamp into the db
 func (b *DB) SetTimestamp(path []string, key string, val time.Time) error {
 	return b.SetValue(path, key, val.Format(time.RFC3339))
 }
@@ -169,7 +220,14 @@ func (b *DB) SetTimestamp(path []string, key string, val time.Time) error {
 func (b *DB) GetBucketList(path []string) ([]string, error) {
 	var err error
 	var ret []string
-	err = b.localDB.Update(func(tx *bolt.Tx) error {
+	if !b.dbIsOpen {
+		if err = b.OpenDB(); err != nil {
+			return ret, err
+		}
+		defer b.CloseDB()
+	}
+
+	err = b.boltDB.Update(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(path[0]))
 		if bkt == nil {
 			return fmt.Errorf("Couldn't find bucket " + path[0])
@@ -203,7 +261,14 @@ func (b *DB) GetBucketList(path []string) ([]string, error) {
 func (b *DB) GetKeyList(path []string) ([]string, error) {
 	var err error
 	var ret []string
-	err = b.localDB.Update(func(tx *bolt.Tx) error {
+	if !b.dbIsOpen {
+		if err = b.OpenDB(); err != nil {
+			return ret, err
+		}
+		defer b.CloseDB()
+	}
+
+	err = b.boltDB.Update(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(path[0]))
 		if bkt == nil {
 			return fmt.Errorf("Couldn't find bucket " + path[0])
@@ -234,7 +299,14 @@ func (b *DB) GetKeyList(path []string) ([]string, error) {
 // DeletePair deletes the pair with key at path
 func (b *DB) DeletePair(path []string, key string) error {
 	var err error
-	err = b.localDB.Update(func(tx *bolt.Tx) error {
+	if !b.dbIsOpen {
+		if err = b.OpenDB(); err != nil {
+			return err
+		}
+		defer b.CloseDB()
+	}
+
+	err = b.boltDB.Update(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(path[0]))
 		if bkt == nil {
 			return fmt.Errorf("Couldn't find bucket " + path[0])
@@ -262,7 +334,14 @@ func (b *DB) DeletePair(path []string, key string) error {
 // DeleteBucket deletes the bucket key at path
 func (b *DB) DeleteBucket(path []string, key string) error {
 	var err error
-	err = b.localDB.Update(func(tx *bolt.Tx) error {
+	if !b.dbIsOpen {
+		if err = b.OpenDB(); err != nil {
+			return err
+		}
+		defer b.CloseDB()
+	}
+
+	err = b.boltDB.Update(func(tx *bolt.Tx) error {
 		bkt := tx.Bucket([]byte(path[0]))
 		if bkt == nil {
 			return fmt.Errorf("Couldn't find bucket " + path[0])
