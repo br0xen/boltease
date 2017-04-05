@@ -346,17 +346,16 @@ func (b *DB) DeleteBucket(path []string, key string) error {
 		if bkt == nil {
 			return fmt.Errorf("Couldn't find bucket " + path[0])
 		}
-		var newBkt *bolt.Bucket
 		for idx := 1; idx < len(path); idx++ {
-			newBkt = bkt.Bucket([]byte(path[idx]))
-			if newBkt == nil {
+			bkt = bkt.Bucket([]byte(path[idx]))
+			if bkt == nil {
 				return fmt.Errorf("Couldn't find bucket " + strings.Join(path[:idx], "/"))
 			}
 		}
-		// newBkt should have the last bucket in the path
+		// bkt should have the last bucket in the path
 		// Test to make sure that key is a bucket, if so, delete it
-		if tst := newBkt.Bucket([]byte(key)); tst != nil {
-			return newBkt.Delete([]byte(key))
+		if tst := bkt.Bucket([]byte(key)); tst != nil {
+			return bkt.DeleteBucket([]byte(key))
 		}
 		return nil
 	})
