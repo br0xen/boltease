@@ -232,16 +232,14 @@ func (b *DB) GetBucketList(path []string) ([]string, error) {
 		if bkt == nil {
 			return fmt.Errorf("Couldn't find bucket " + path[0])
 		}
-		var newBkt *bolt.Bucket
 		var berr error
 		if len(path) > 1 {
 			for idx := 1; idx < len(path); idx++ {
-				newBkt = bkt.Bucket([]byte(path[idx]))
-				if newBkt == nil {
-					return fmt.Errorf("Couldn't find bucket " + strings.Join(path[:idx], "/"))
+				bkt = bkt.Bucket([]byte(path[idx]))
+				if bkt == nil {
+					return fmt.Errorf("Couldn't find bucket " + strings.Join(path[:idx], " / "))
 				}
 			}
-			bkt = newBkt
 		}
 
 		// newBkt should have the last bucket in the path
