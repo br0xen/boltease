@@ -242,7 +242,7 @@ func (b *DB) GetBucketList(path []string) ([]string, error) {
 			}
 		}
 
-		// newBkt should have the last bucket in the path
+		// bkt should have the last bucket in the path
 		berr = bkt.ForEach(func(k, v []byte) error {
 			if v == nil {
 				// Must be a bucket
@@ -271,20 +271,20 @@ func (b *DB) GetKeyList(path []string) ([]string, error) {
 		if bkt == nil {
 			return fmt.Errorf("Couldn't find bucket " + path[0])
 		}
+		var berr error
 		if len(path) > 1 {
-			var newBkt *bolt.Bucket
 			for idx := 1; idx < len(path); idx++ {
-				newBkt = bkt.Bucket([]byte(path[idx]))
-				if newBkt == nil {
-					return fmt.Errorf("Couldn't find bucket " + strings.Join(path[:idx], "/"))
+				bkt = bkt.Bucket([]byte(path[idx]))
+				if bkt == nil {
+					return fmt.Errorf("Couldn't find bucket " + strings.Join(path[:idx], " / "))
 				}
 			}
-			bkt = newBkt
 		}
-		// newBkt should have the last bucket in the path
-		berr := bkt.ForEach(func(k, v []byte) error {
+
+		// bkt should have the last bucket in the path
+		berr = bkt.ForEach(func(k, v []byte) error {
 			if v != nil {
-				// Not a bucket
+				// Must be a key
 				ret = append(ret, string(k))
 			}
 			return nil
