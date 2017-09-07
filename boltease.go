@@ -366,7 +366,7 @@ func (b *DB) GetValueList(path []string) ([]string, error) {
 	var ret []string
 	if !b.dbIsOpen {
 		if err = b.OpenDB(); err != nil {
-			return err
+			return ret, err
 		}
 		defer b.CloseDB()
 	}
