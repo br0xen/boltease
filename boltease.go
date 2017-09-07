@@ -359,3 +359,42 @@ func (b *DB) DeleteBucket(path []string, key string) error {
 	})
 	return err
 }
+
+// GetValueList returns a string slice of all values in the bucket at path
+func (b *DB) GetValueList(path []string) ([]string, error) {
+	var err error
+	var ret []string
+	if !b.dbIsOpen {
+		if err = b.OpenDB(); err != nil {
+			return err
+		}
+		defer b.CloseDB()
+	}
+
+	err = b.boltDB.Update(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(path[0]))
+		if bkt == nil {
+			return fmt.Errorf("Couldn't find bucket " + path[0])
+		}
+		var berr error
+		if len(path) > 1 {
+			for idx := 1; idx < len(path); idx++ {
+				bkt = bkt.Bucket([]byte(path[idx]))
+				if bkt == nil {
+					return fmt.Errorf("Couldn't find bucket " + strings.Join(path[:idx], " / "))
+				}
+			}
+		}
+
+		// bkt should have the last bucket in the path
+		berr = bkt.ForEach(func(k, v []byte) error {
+			if v != nil {
+				// Must be a key
+				ret = append(ret, string(v))
+			}
+			return nil
+		})
+		return berr
+	})
+	return ret, err
+}
