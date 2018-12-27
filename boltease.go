@@ -119,7 +119,7 @@ func (b *DB) GetValue(path []string, key string) (string, error) {
 		for idx := 1; idx < len(path); idx++ {
 			bkt = bkt.Bucket([]byte(path[idx]))
 			if bkt == nil {
-				return fmt.Errorf("Couldn't find bucket " + strings.Join(path[:idx], "/"))
+				return fmt.Errorf("Couldn't find bucket " + strings.Join(path[:idx+1], "/"))
 			}
 		}
 		// newBkt should have the last bucket in the path
