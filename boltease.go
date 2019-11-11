@@ -1,6 +1,7 @@
 package boltease
 
 import (
+	"encoding/binary"
 	"fmt"
 	"os"
 	"strconv"
@@ -95,6 +96,63 @@ func (b *DB) MkBucketPath(path []string) error {
 			}
 		}
 		return err
+	})
+	return err
+}
+
+func (b *DB) GetBytes(path []string, key string) ([]byte, error) {
+	var err error
+	var ret []byte
+	if !b.dbIsOpen {
+		if err = b.OpenDB(); err != nil {
+			return nil, err
+		}
+		defer b.CloseDB()
+	}
+	err = b.boltDB.View(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(path[0]))
+		if bkt == nil {
+			return fmt.Errorf("Couldn't find bucket " + path[0])
+		}
+		for idx := 1; idx < len(path); idx++ {
+			bkt = bkt.Bucket([]byte(path[idx]))
+			if bkt == nil {
+				return fmt.Errorf("Couldn't find bucket " + strings.Join(path[:idx+1], "/"))
+			}
+		}
+		// newBkt should have the last bucket in the path
+		ret = bkt.Get([]byte(key))
+		return nil
+	})
+	return ret, err
+}
+
+func (b *DB) SetBytes(path []string, key string, val []byte) error {
+	var err error
+	if !b.dbIsOpen {
+		if err = b.OpenDB(); err != nil {
+			return err
+		}
+		defer b.CloseDB()
+	}
+
+	err = b.MkBucketPath(path)
+	if err != nil {
+		return err
+	}
+	err = b.boltDB.Update(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(path[0]))
+		if bkt == nil {
+			return fmt.Errorf("Couldn't find bucket " + path[0])
+		}
+		for idx := 1; idx < len(path); idx++ {
+			bkt, err = bkt.CreateBucketIfNotExists([]byte(path[idx]))
+			if err != nil {
+				return err
+			}
+		}
+		// bkt should have the last bucket in the path
+		return bkt.Put([]byte(key), val)
 	})
 	return err
 }
@@ -397,4 +455,44 @@ func (b *DB) GetValueList(path []string) ([]string, error) {
 		return berr
 	})
 	return ret, err
+}
+
+// SetValueList puts a string slice into the bucket at path
+func (b *DB) SetValueList(path, values []string) error {
+	var err error
+	if !b.dbIsOpen {
+		if err = b.OpenDB(); err != nil {
+			return err
+		}
+		defer b.CloseDB()
+	}
+
+	err = b.MkBucketPath(path)
+	if err != nil {
+		return err
+	}
+	err = b.boltDB.Update(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(path[0]))
+		if bkt == nil {
+			return fmt.Errorf("Couldn't find bucket " + path[0])
+		}
+		for idx := 1; idx < len(path); idx++ {
+			bkt, err = bkt.CreateBucketIfNotExists([]byte(path[idx]))
+			if err != nil {
+				return err
+			}
+		}
+		// bkt should have the last bucket in the path
+		for _, v := range values {
+			id, _ := bkt.NextSequence()
+			bId := make([]byte, 8)
+			binary.BigEndian.PutUint64(bId, id)
+			err = bkt.Put(bId, []byte(v))
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return err
 }
