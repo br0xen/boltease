@@ -496,3 +496,101 @@ func (b *DB) SetValueList(path, values []string) error {
 	})
 	return err
 }
+
+// GetKeyValueMap returns a map of all keys & values in the bucket at path
+func (b *DB) GetKeyValueMap(path []string) (map[string][]byte, error) {
+	var err error
+	ret := make(map[string][]byte)
+	if !b.dbIsOpen {
+		if err = b.OpenDB(); err != nil {
+			return ret, err
+		}
+		defer b.CloseDB()
+	}
+
+	err = b.boltDB.Update(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(path[0]))
+		if bkt == nil {
+			return fmt.Errorf("Couldn't find bucket " + path[0])
+		}
+		var berr error
+		if len(path) > 1 {
+			for idx := 1; idx < len(path); idx++ {
+				bkt = bkt.Bucket([]byte(path[idx]))
+				if bkt == nil {
+					return fmt.Errorf("Couldn't find bucket " + strings.Join(path[:idx], " / "))
+				}
+			}
+		}
+
+		// bkt should have the last bucket in the path
+		berr = bkt.ForEach(func(k, v []byte) error {
+			if v != nil {
+				// Must be a key
+				ret[string(k)] = v
+			}
+			return nil
+		})
+		return berr
+	})
+	return ret, err
+}
+
+// GetKeyValueStringMap returns all key/value pairs at path as a map
+func (b *DB) GetKeyValueStringMap(path []string) (map[string]string, error) {
+	ret := make(map[string]string)
+	btMap, err := b.GetKeyValueMap(path)
+	if err != nil {
+		return ret, err
+	}
+	for k, v := range btMap {
+		ret[k] = string(v)
+	}
+	return ret, err
+}
+
+// SetKeyValueMap puts all keys & their values into the bucket at path
+func (b *DB) SetKeyValueMap(path []string, kvMap map[string][]byte) error {
+	var err error
+	if !b.dbIsOpen {
+		if err = b.OpenDB(); err != nil {
+			return err
+		}
+		defer b.CloseDB()
+	}
+
+	err = b.MkBucketPath(path)
+	if err != nil {
+		return err
+	}
+	err = b.boltDB.Update(func(tx *bolt.Tx) error {
+		bkt := tx.Bucket([]byte(path[0]))
+		if bkt == nil {
+			return fmt.Errorf("Couldn't find bucket " + path[0])
+		}
+		for idx := 1; idx < len(path); idx++ {
+			bkt, err = bkt.CreateBucketIfNotExists([]byte(path[idx]))
+			if err != nil {
+				return err
+			}
+		}
+		// bkt should have the last bucket in the path
+		for k, v := range kvMap {
+			err = bkt.Put([]byte(k), []byte(v))
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return err
+}
+
+// SetKeyValueStringMap takes a map[string]string and puts all key/value pairs into the bucket at path
+func (b *DB) SetKeyValueStringMap(path []string, kvMap map[string]string) error {
+	chain := make(map[string][]byte)
+	for k, v := range kvMap {
+		chain[k] = []byte(v)
+	}
+	return b.SetKeyValueMap(path, chain)
+}
